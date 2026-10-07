@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS users (
+ id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+ full_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS projects (
+ id SERIAL PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, location TEXT DEFAULT '',
+ expected_qty NUMERIC NOT NULL DEFAULT 0, unit TEXT NOT NULL DEFAULT 'công trình', status TEXT NOT NULL DEFAULT 'Đang thực hiện',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS project_members (
+ project_id INT REFERENCES projects(id) ON DELETE CASCADE, user_id INT REFERENCES users(id) ON DELETE CASCADE,
+ PRIMARY KEY(project_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS catalog (
+ id SERIAL PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '',
+ fixed BOOLEAN NOT NULL DEFAULT FALSE, active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS reports (
+ id SERIAL PRIMARY KEY, project_id INT REFERENCES projects(id) ON DELETE CASCADE, user_id INT REFERENCES users(id),
+ report_date DATE NOT NULL DEFAULT CURRENT_DATE, report_time TIME NOT NULL DEFAULT LOCALTIME,
+ task_id INT REFERENCES catalog(id), task_name TEXT NOT NULL, qty NUMERIC NOT NULL DEFAULT 0,
+ completed NUMERIC NOT NULL DEFAULT 0, unit TEXT NOT NULL DEFAULT '', note TEXT DEFAULT '', review TEXT DEFAULT '', direction TEXT DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'locked', change_type TEXT NOT NULL DEFAULT 'new', edit_requested_at TIMESTAMPTZ,
+ edit_approved_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS edit_requests (
+ id SERIAL PRIMARY KEY, report_id INT REFERENCES reports(id) ON DELETE CASCADE, requester_id INT REFERENCES users(id),
+ reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ, reviewer_id INT REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS audit_logs (
+ id SERIAL PRIMARY KEY, actor_id INT REFERENCES users(id), action TEXT NOT NULL, detail TEXT DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reports_project_date ON reports(project_id,report_date);
+CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id);
