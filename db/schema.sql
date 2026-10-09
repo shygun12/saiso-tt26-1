@@ -26,10 +26,11 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 CREATE TABLE IF NOT EXISTS edit_requests (
  id SERIAL PRIMARY KEY, report_id INT REFERENCES reports(id) ON DELETE CASCADE, requester_id INT REFERENCES users(id),
- reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ, reviewer_id INT REFERENCES users(id)
+ reason TEXT NOT NULL, proposed_changes JSONB NOT NULL DEFAULT '{}'::jsonb, status TEXT NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), reviewed_at TIMESTAMPTZ, reviewer_id INT REFERENCES users(id)
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
  id SERIAL PRIMARY KEY, actor_id INT REFERENCES users(id), action TEXT NOT NULL, detail TEXT DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_reports_project_date ON reports(project_id,report_date);
 CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id);
+ALTER TABLE edit_requests ADD COLUMN IF NOT EXISTS proposed_changes JSONB NOT NULL DEFAULT '{}'::jsonb;
