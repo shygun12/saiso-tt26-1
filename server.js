@@ -28,9 +28,10 @@ async function init(){
  // Configure ROOT_ADMIN_USERNAME and ROOT_ADMIN_PASSWORD in Render environment variables.
  if(process.env.ROOT_ADMIN_USERNAME && process.env.ROOT_ADMIN_PASSWORD){
   const rootName=process.env.ROOT_ADMIN_USERNAME;
+  const rootFullName=process.env.ROOT_ADMIN_FULL_NAME||"Võ Nhựt Hào";
   const rootHash=await bcrypt.hash(process.env.ROOT_ADMIN_PASSWORD,12);
   await pool.query("UPDATE users SET is_root=FALSE WHERE username<>$1",[rootName]);
-  await pool.query("INSERT INTO users(username,password_hash,full_name,role,active,is_root) VALUES($1,$2,$3,'admin',TRUE,TRUE) ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,full_name=EXCLUDED.full_name,role='admin',active=TRUE,is_root=TRUE",[rootName,rootHash,rootName]);
+  await pool.query("INSERT INTO users(username,password_hash,full_name,role,active,is_root) VALUES($1,$2,$3,'admin',TRUE,TRUE) ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,full_name=EXCLUDED.full_name,role='admin',active=TRUE,is_root=TRUE",[rootName,rootHash,rootFullName]);
   if(rootName!=="admin") await pool.query("UPDATE users SET active=FALSE,is_root=FALSE WHERE username='admin'");
  }
  await pool.query("insert into catalog(code,name,unit,fixed) values('CV00','Đã chuyển bản vẽ cho Phòng BT&GPMB','công trình',true) on conflict(code) do update set name=excluded.name,unit=excluded.unit,fixed=true");
