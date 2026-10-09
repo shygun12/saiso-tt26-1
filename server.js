@@ -26,6 +26,7 @@ async function init(){
   const pw=process.env.ADMIN_PASSWORD||"123456";
   await pool.query("insert into users(username,password_hash,full_name,role) values($1,$2,$3,'admin')",[u,await bcrypt.hash(pw,12),"Quản trị viên"]);
  }
+ await pool.query("UPDATE users SET is_root=TRUE WHERE username=$1",[process.env.ROOT_ADMIN_USERNAME||process.env.ADMIN_USERNAME||"admin"]);
  await pool.query("insert into catalog(code,name,unit,fixed) values('CV00','Đã chuyển bản vẽ cho Phòng BT&GPMB','công trình',true) on conflict(code) do update set name=excluded.name,unit=excluded.unit,fixed=true");
  const tasks=[["CV01","Đo hiện trạng","thửa"],["CV02","Lập phiếu đo đạc","phiếu"],["CV03","Kiểm tra hồ sơ","hồ sơ"],["CV04","Kiểm kê tài sản","hộ"],["CV05","Xác định ranh","thửa"],["CV06","Hoàn thiện hồ sơ","hồ sơ"]];
  for(const t of tasks) await pool.query("insert into catalog(code,name,unit) values($1,$2,$3) on conflict(code) do nothing",t);
