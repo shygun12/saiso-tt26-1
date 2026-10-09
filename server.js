@@ -19,14 +19,20 @@ async function init(){
  const schema=fs.readFileSync(path.join(__dirname,"db/schema.sql"),"utf8");
  await pool.query(schema);
  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_root BOOLEAN NOT NULL DEFAULT FALSE");
- await pool.query("UPDATE users SET is_root=TRUE WHERE username=$1",[process.env.ROOT_ADMIN_USERNAME||process.env.ADMIN_USERNAME||"admin"]);
  const n=(await pool.query("select count(*) from users")).rows[0].count;
- if(Number(n)===0){
+ if(Number(n)===0 && !process.env.ROOT_ADMIN_USERNAME){
   const u=process.env.ADMIN_USERNAME||"admin";
   const pw=process.env.ADMIN_PASSWORD||"123456";
   await pool.query("insert into users(username,password_hash,full_name,role) values($1,$2,$3,'admin')",[u,await bcrypt.hash(pw,12),"Quản trị viên"]);
  }
- await pool.query("UPDATE users SET is_root=TRUE WHERE username=$1",[process.env.ROOT_ADMIN_USERNAME||process.env.ADMIN_USERNAME||"admin"]);
+ // Configure ROOT_ADMIN_USERNAME and ROOT_ADMIN_PASSWORD in Render environment variables.
+ if(process.env.ROOT_ADMIN_USERNAME && process.env.ROOT_ADMIN_PASSWORD){
+  const rootName=process.env.ROOT_ADMIN_USERNAME;
+  const rootHash=await bcrypt.hash(process.env.ROOT_ADMIN_PASSWORD,12);
+  await pool.query("UPDATE users SET is_root=FALSE WHERE username<>$1",[rootName]);
+  await pool.query("INSERT INTO users(username,password_hash,full_name,role,active,is_root) VALUES($1,$2,$3,'admin',TRUE,TRUE) ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,full_name=EXCLUDED.full_name,role='admin',active=TRUE,is_root=TRUE",[rootName,rootHash,rootName]);
+  if(rootName!=="admin") await pool.query("UPDATE users SET active=FALSE,is_root=FALSE WHERE username='admin'");
+ }
  await pool.query("insert into catalog(code,name,unit,fixed) values('CV00','Đã chuyển bản vẽ cho Phòng BT&GPMB','công trình',true) on conflict(code) do update set name=excluded.name,unit=excluded.unit,fixed=true");
  const tasks=[["CV01","Đo hiện trạng","thửa"],["CV02","Lập phiếu đo đạc","phiếu"],["CV03","Kiểm tra hồ sơ","hồ sơ"],["CV04","Kiểm kê tài sản","hộ"],["CV05","Xác định ranh","thửa"],["CV06","Hoàn thiện hồ sơ","hồ sơ"]];
  for(const t of tasks) await pool.query("insert into catalog(code,name,unit) values($1,$2,$3) on conflict(code) do nothing",t);
