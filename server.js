@@ -5,6 +5,9 @@ const jwt=require("jsonwebtoken");
 const {Pool}=require("pg");
 const fs=require("fs");
 const path=require("path");
+const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,WidthType,AlignmentType,HeadingLevel}=require("docx");
+const ExcelJS=require("exceljs");
+const archiver=require("archiver");
 
 const app=express();
 app.use(express.json({limit:"2mb"}));
@@ -68,6 +71,87 @@ app.post("/api/edit-requests/:id/approve",auth,admin,async(req,res)=>{const q=(a
 app.put("/api/reports/:id",auth,async(req,res)=>{const r=(await db("select * from reports where id=$1",[req.params.id]))[0];if(!r)return res.status(404).json({error:"Không tìm thấy"});if(req.user.role!=="admin"&&!(r.status==="editing"&&r.user_id===req.user.id))return res.status(403).json({error:"Chưa được phép sửa"});const qty=Number(req.body.qty),completed=Number(req.body.completed);if(qty<=0||completed>qty)return res.status(400).json({error:"Khối lượng không hợp lệ"});const x=await db("update reports set qty=$1,completed=$2,note=$3,review=$4,direction=$5,status='locked',change_type='changed',updated_at=now() where id=$6 returning *",[qty,completed,req.body.note||"",req.body.review||"",req.body.direction||"",r.id]);await db("insert into audit_logs(actor_id,action,detail) values($1,'edit_report',$2)",[req.user.id,JSON.stringify({report:r.id,old_qty:r.qty,new_qty:qty})]);res.json(x[0])});
 app.get("/api/summary",auth,async(req,res)=>{const projects=await db("select p.*,coalesce(sum(case when c.fixed=true then r.completed else 0 end),0) completed from projects p left join reports r on r.project_id=p.id left join catalog c on c.id=r.task_id group by p.id order by p.id");res.json(projects)});
 app.get("/api/audit",auth,admin,async(req,res)=>res.json(await db("select a.*,u.full_name,u.username,u.role,u.is_root from audit_logs a left join users u on u.id=a.actor_id order by a.id desc limit 500")));
+
+function docText(text,opts={}){return new Paragraph({children:[new TextRun({text:String(text??""),font:"Times New Roman",size:opts.size||24,bold:Boolean(opts.bold),italics:Boolean(opts.italics)})],alignment:opts.align,spacing:{after:opts.after??100}})}
+function docCell(text,bold=false){return new TableCell({children:[new Paragraph({children:[new TextRun({text:String(text??""),font:"Times New Roman",size:18,bold})]})],verticalAlign:"center"})}
+function docTable(headers,rows){return new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[new TableRow({children:headers.map(x=>docCell(x,true))}),...rows.map(r=>new TableRow({children:r.map(x=>docCell(x))}))]})}
+async function buildWord(project,person,rows){
+ const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,WidthType,AlignmentType}=require("docx");
+ const byTask={};for(const r of rows){const k=r.task_name;byTask[k]??={qty:0,completed:0,unit:r.unit,rows:0,notes:[]};byTask[k].qty+=Number(r.qty||0);byTask[k].completed+=Number(r.completed||0);byTask[k].rows++;if(r.note)byTask[k].notes.push(r.note)}
+ const mk=(text,opts={})=>new Paragraph({children:[new TextRun({text:String(text??""),font:"Times New Roman",size:opts.size||24,bold:!!opts.bold,italics:!!opts.italics})],alignment:opts.align,spacing:{after:opts.after??100}});
+ const cell=t=>new TableCell({children:[mk(String(t??""),{size:18})],verticalAlign:"center"});
+ const table=(heads,data)=>new Table({width:{size:100,type:WidthType.PERCENTAGE},rows:[new TableRow({children:heads.map(t=>new TableCell({children:[mk(t,{size:18,bold:true})]}))}),...data.map(row=>new TableRow({children:row.map(cell)}))]});
+ const totalQty=rows.reduce((a,r)=>a+Number(r.qty||0),0),totalDone=rows.reduce((a,r)=>a+Number(r.completed||0),0);
+ const content=[
+ mk("CHI NHÁNH TRUNG TÂM PHÁT TRIỂN QUỸ ĐẤT KHU VỰC BÌNH DƯƠNG",{bold:true,align:AlignmentType.CENTER}),
+ mk("PHÒNG KỸ THUẬT VÀ THÔNG TIN ĐẤT ĐAI",{bold:true,align:AlignmentType.CENTER}),
+ mk("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",{bold:true,align:AlignmentType.CENTER}),
+ mk("Độc lập - Tự do - Hạnh phúc",{bold:true,align:AlignmentType.CENTER}),
+ mk("Thành phố Hồ Chí Minh, ngày ..... tháng ..... năm 2026",{italics:true,align:AlignmentType.RIGHT,after:300}),
+ mk("BÁO CÁO ĐỊNH KỲ",{bold:true,align:AlignmentType.CENTER}),
+ mk("Về việc thực hiện Dự án:",{align:AlignmentType.CENTER}),
+ mk(project.name,{bold:true,align:AlignmentType.CENTER,after:250}),
+ mk("Người thực hiện: "+person,{bold:true}),
+ mk("I. THÔNG TIN CÔNG TRÌNH/DỰ ÁN",{bold:true}),
+ mk(" - Tên công trình/dự án: "+project.name),
+ mk(" - Mã công trình: "+project.code),
+ mk(" - Địa bàn: "+(project.location||"")),
+ mk(" - Tổng số hộ dân bị ảnh hưởng:"),
+ mk(" + Chiều dài tuyến:"),
+ mk(" + Tổng số hộ dân/thửa đất bị ảnh hưởng bởi công trình:"),
+ mk("II. KẾT QUẢ THỰC HIỆN",{bold:true}),
+ mk("Tổng hợp báo cáo công việc của "+person+": "+rows.length+" dòng báo cáo; tổng khối lượng "+totalQty+"; đã hoàn thành "+totalDone+"."),
+ mk("1. Kết quả đo đạc hiện trạng",{bold:true}),
+ table(["STT","Nội dung công việc","Khối lượng báo cáo","Đã hoàn thành","Đơn vị","Ghi chú"],Object.entries(byTask).map(([name,v],i)=>[i+1,name,v.qty,v.completed,v.unit,v.notes.join("; ")])),
+ mk("2. Kết quả lập bản mô tả hiện trạng ranh giới, mốc giới thửa đất",{bold:true}),
+ mk("Số chủ sử dụng đất đã ký/chưa ký và số liên ranh đã ký/chưa ký:"),
+ mk(""),
+ mk("3. Kết quả lập phiếu đo đạc chỉnh lý thửa đất",{bold:true}),
+ mk("Số lượng cụ thể theo từng trường hợp được thể hiện trong file Excel đính kèm nếu có dữ liệu."),
+ mk("(Đính kèm theo danh sách Excel từng trường hợp cụ thể)",{italics:true}),
+ mk("III. KHÓ KHĂN, VƯỚNG MẮC VÀ ĐỀ XUẤT KIẾN NGHỊ",{bold:true}),
+ mk("1. Khó khăn, vướng mắc"),
+ mk(rows.map(r=>r.note).filter(Boolean).join("; ")),
+ mk("2. Đề xuất, kiến nghị"),
+ mk(rows.map(r=>r.direction).filter(Boolean).join("; "))
+ ];
+ const doc=new Document({sections:[{properties:{page:{size:{width:11906,height:16838},margin:{top:900,bottom:900,left:1000,right:1000}}},children:content}]});
+ return Packer.toBuffer(doc);
+}
+async function buildExcel(project,person,rows){
+ const wb=new ExcelJS.Workbook();wb.creator="Báo cáo công việc";wb.created=new Date();
+ const ws=wb.addWorksheet("Danh sách hồ sơ");
+ ws.mergeCells("A1:T1");ws.getCell("A1").value="DANH SÁCH\nTổ chức, hộ gia đình, cá nhân có đất ảnh hưởng Dự án: "+project.name;ws.getCell("A1").alignment={wrapText:true,vertical:"middle",horizontal:"center"};ws.getCell("A1").font={bold:true,size:12};
+ const headers=["STT","Tổ thực hiện","Số hộ","Số thửa","Chủ sử dụng đất","Số thửa","Số tờ BĐ","Diện tích tổng (m2)","Loại đất","Vướng mắc","Kế hoạch thực hiện, giải quyết vướng mắc","Ký bản mô tả","Ký PXN","Chuyển kiểm tra cấp đơn vị thi công","Trình lãnh đạo phòng","Trình phó giám đốc","Chuyển UBND phường kiểm tra","Đi ký dân","Bàn giao Phòng BT&GPMB","Bàn giao Phòng BT ranh GPMB"];
+ ws.addRow(headers);const hr=ws.getRow(2);hr.font={bold:true};hr.alignment={wrapText:true,vertical:"middle",horizontal:"center"};hr.height=58;
+ // Không tự suy đoán thông tin từng hộ/thửa khi hệ thống chưa lưu các trường này.
+ const notes=[...new Set(rows.map(r=>r.note).filter(Boolean))].join("; ");
+ ws.addRow([1,person,"","","","","","","",notes,[...new Set(rows.map(r=>r.direction).filter(Boolean))].join("; "),"","","","","","","","",""]);
+ const widths=[7,20,10,10,26,12,12,17,12,30,36,14,12,20,17,17,22,14,23,25];widths.forEach((w,i)=>ws.getColumn(i+1).width=w);
+ ws.eachRow(row=>row.eachCell(cell=>{cell.alignment={...(cell.alignment||{}),vertical:"top",wrapText:true};cell.border={top:{style:"thin",color:{argb:"FFD9E2F0"}},left:{style:"thin",color:{argb:"FFD9E2F0"}},bottom:{style:"thin",color:{argb:"FFD9E2F0"}},right:{style:"thin",color:{argb:"FFD9E2F0"}}}}));
+ const detail=wb.addWorksheet("Chi tiết báo cáo");detail.addRow(["Ngày","Giờ","Người thực hiện","Mã công trình","Công trình","Nội dung công việc","Khối lượng","Đã hoàn thành","Đơn vị","Ghi chú","Nhận xét","Chỉ đạo","Trạng thái"]);
+ for(const r of rows)detail.addRow([r.report_date?new Date(r.report_date).toLocaleDateString("vi-VN"):"",r.report_time?String(r.report_time).slice(0,5):"",person,project.code,project.name,r.task_name,r.qty,r.completed,r.unit,r.note||"",r.review||"",r.direction||"",r.status||""]);
+ detail.columns=[{width:13},{width:10},{width:24},{width:15},{width:28},{width:34},{width:14},{width:14},{width:13},{width:32},{width:32},{width:32},{width:16}];detail.views=[{state:"frozen",ySplit:1}];
+ [ws,detail].forEach(sh=>{sh.autoFilter={from:{row:2,column:1},to:{row:sh.rowCount,column:sh.columnCount}};sh.getRow(1).font={bold:true,size:12};});
+ return wb.xlsx.writeBuffer();
+}
+app.get("/api/exports/reports.zip",auth,admin,async(req,res)=>{
+ try{
+  const rows=await db("select r.*,p.code project_code,p.name project_name,p.location project_location,u.full_name person from reports r join projects p on p.id=r.project_id join users u on u.id=r.user_id order by p.name,u.full_name,r.report_date,r.report_time,r.id");
+  if(!rows.length)return res.status(404).json({error:"Chưa có báo cáo để xuất"});
+  const groups=new Map();for(const r of rows){const key=r.project_id+"_"+r.user_id;if(!groups.has(key))groups.set(key,{project:{id:r.project_id,code:r.project_code,name:r.project_name,location:r.project_location},person:r.person,rows:[]});groups.get(key).rows.push(r)}
+  res.setHeader("Content-Type","application/zip");res.setHeader("Content-Disposition",'attachment; filename="Bao_cao_cong_trinh_Word_Excel.zip"');
+  const zip=archiver("zip",{zlib:{level:6}});zip.on("error",e=>{if(!res.headersSent)res.status(500);res.end()});zip.pipe(res);
+  for(const g of groups.values()){
+   const safe=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/đ/g,"d").replace(/Đ/g,"D").replace(/[^a-zA-Z0-9_-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,70)||"Bao_cao";
+   const base=safe(g.project.code+"_"+g.project.name+"_"+g.person);
+   const doc=await buildWord(g.project,g.person,g.rows);zip.append(doc,{name:base+"/"+base+".docx"});
+   const xlsx=await buildExcel(g.project,g.person,g.rows);zip.append(Buffer.from(xlsx),{name:base+"/"+base+".xlsx"});
+  }
+  await zip.finalize();
+ }catch(e){console.error("export reports",e);if(!res.headersSent)res.status(500).json({error:"Không tạo được bộ báo cáo: "+e.message})}
+});
+
 app.get("/{*splat}",(req,res)=>res.sendFile(path.join(__dirname,"public","index.html")));
 
 init().then(()=>app.listen(process.env.PORT||3000,()=>console.log("BaoCaoCongViec V2.0 running"))).catch(e=>{console.error(e);process.exit(1)});
