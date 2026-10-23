@@ -13,6 +13,7 @@
     "pg": "^8.16.3",
     "docx": "^9.5.1",
     "exceljs": "^4.4.0",
-    "archiver": "^7.0.1"
+    "archiver": "^7.0.1",
+    "express-rate-limit": "^8.1.0"
   }
 }
